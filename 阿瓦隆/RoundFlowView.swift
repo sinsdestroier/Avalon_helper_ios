@@ -4,6 +4,7 @@ import UIKit
 #endif
 
 struct RoundFlowView: View {
+    @Environment(AppSettings.self) private var appSettings
     @ObservedObject var session: GameSession
     @Environment(\.dismiss) private var dismiss
 
@@ -77,6 +78,31 @@ struct RoundFlowView: View {
         }
     }
 
+    private struct MissionMemeOverlay: Equatable {
+        let imageName: String
+        let title: String
+        let soundEffect: SoundEffect
+        let holdAfterSound: TimeInterval
+    }
+
+    private enum AssassinationCinematicStage: Equatable {
+        case suspense
+        case result(wasSuccessful: Bool)
+    }
+
+    private struct AssassinationCinematicState: Equatable {
+        let targetSeat: Int
+        let wasSuccessful: Bool
+        let stage: AssassinationCinematicStage
+    }
+
+    private struct EvilVictoryCinematicState: Equatable {
+        let imageName: String
+        let title: String
+        let soundEffect: SoundEffect
+        let holdAfterSound: TimeInterval
+    }
+
     @State private var showConfirmNomination = false
     @State private var showConfirmMissionChoice = false
     @State private var pendingMissionSuccess = true
@@ -99,6 +125,16 @@ struct RoundFlowView: View {
     @State private var showDangerStepOne = false
     @State private var showDangerStepTwo = false
     @State private var pendingDangerAction: DangerAction?
+    @State private var activeMissionMemeOverlay: MissionMemeOverlay?
+    @State private var missionMemeOverlaySequence = 0
+    @State private var assassinationCinematic: AssassinationCinematicState?
+    @State private var assassinationCinematicSequence = 0
+    @State private var beastJumpOffset: CGFloat = 0
+    @State private var beastShakeOffset: CGFloat = 0
+    @State private var evilVictoryCinematic: EvilVictoryCinematicState?
+    @State private var evilVictoryCinematicSequence = 0
+    @State private var evilVictoryRotation: Double = 0
+    @State private var evilVictoryScale: CGFloat = 0.7
 
     var body: some View {
         GeometryReader { geo in
@@ -124,6 +160,24 @@ struct RoundFlowView: View {
 
                 overlayHUD(geo: geo)
 
+                if let activeMissionMemeOverlay {
+                    missionMemeOverlay(activeMissionMemeOverlay)
+                        .transition(.opacity)
+                        .zIndex(10)
+                }
+
+                if let assassinationCinematic {
+                    assassinationCinematicOverlay(for: assassinationCinematic)
+                        .transition(.opacity)
+                        .zIndex(11)
+                }
+
+                if let evilVictoryCinematic {
+                    evilVictoryCinematicOverlay(for: evilVictoryCinematic)
+                        .transition(.opacity)
+                        .zIndex(12)
+                }
+
                 if isBottomPanelMinimized {
                     VStack {
                         Spacer()
@@ -148,10 +202,16 @@ struct RoundFlowView: View {
             .ignoresSafeArea()
         }
         .onAppear {
+            SoundEffectPlayer.shared.stop(.setupOpen)
             setLandscape(true)
             resetCalibrationCenters()
         }
-        .onDisappear { setLandscape(false) }
+        .onDisappear {
+            setLandscape(false)
+            dismissMissionMemeOverlay()
+            dismissAssassinationCinematic(commitResult: false)
+            dismissEvilVictoryCinematic(commitResult: false)
+        }
         .onChange(of: session.playerCount) { _, _ in
             resetCalibrationCenters()
         }
@@ -218,6 +278,7 @@ struct RoundFlowView: View {
             withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                 isPhasePanelMinimized = false
             }
+            presentMissionMemeIfNeeded()
         }
     }
 
@@ -287,8 +348,7 @@ struct RoundFlowView: View {
         CGPoint(
             x: rect.minX + rect.width * normalizedX,
             y: rect.minY + rect.height * normalizedY
-        )
-    }
+        )    }
 
     private func overlayPoints(from normalizedCenters: [CGPoint], in rect: CGRect) -> [CGPoint] {
         normalizedCenters.map { normalizedPoint(in: rect, normalizedX: $0.x, normalizedY: $0.y) }
@@ -411,6 +471,100 @@ struct RoundFlowView: View {
         .animation(.easeInOut(duration: 0.2), value: showSentAnimation)
     }
 
+    private func missionMemeOverlay(_ overlay: MissionMemeOverlay) -> some View {
+        ZStack {
+            Color.black.opacity(0.72)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                Image(overlay.imageName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 340, maxHeight: 340)
+                    .shadow(color: .black.opacity(0.35), radius: 18, x: 0, y: 10)
+
+                Text(overlay.title)
+                    .font(.system(size: 30, weight: .heavy))
+                    .foregroundStyle(.white)
+
+                Text("點一下可跳過")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+            .padding(28)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            dismissMissionMemeOverlay()
+        }
+    }
+
+    private func assassinationCinematicOverlay(for state: AssassinationCinematicState) -> some View {
+        ZStack {
+            Color.black.opacity(0.78)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                VStack(spacing: 20) {
+                    assassinationImage(for: state)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 360, maxHeight: 360)
+                        .offset(x: state.stage == .result(wasSuccessful: true) ? beastShakeOffset : 0,
+                                y: state.stage == .result(wasSuccessful: true) ? beastJumpOffset : 0)
+                        .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 12)
+
+                    Text(assassinationTitle(for: state))
+                        .font(.system(size: 30, weight: .heavy))
+                        .foregroundStyle(.white)
+
+                    Text(assassinationSubtitle(for: state))
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.82))
+                        .multilineTextAlignment(.center)
+                }
+                .id(assassinationStageID(for: state))
+                .transition(.opacity)
+            }
+            .padding(28)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            handleAssassinationCinematicTap()
+        }
+        .animation(.easeInOut(duration: 0.35), value: assassinationStageID(for: state))
+    }
+
+    private func evilVictoryCinematicOverlay(for state: EvilVictoryCinematicState) -> some View {
+        ZStack {
+            Color.black.opacity(0.78)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                Image(state.imageName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 340, maxHeight: 340)
+                    .rotationEffect(.degrees(evilVictoryRotation))
+                    .scaleEffect(evilVictoryScale)
+                    .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 12)
+
+                Text(state.title)
+                    .font(.system(size: 30, weight: .heavy))
+                    .foregroundStyle(.white)
+
+                Text("點一下進入真正的結果公布")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.82))
+            }
+            .padding(28)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            dismissEvilVictoryCinematic(commitResult: true)
+        }
+    }
+
     private var topStatusRow: some View {
         VStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -467,16 +621,14 @@ struct RoundFlowView: View {
                         showDebugRoles = true
                     }
                     .buttonStyle(.bordered)
-
-                    Button {
-                        showsCalibrationOverlay.toggle()
-                        if showsCalibrationOverlay {
-                            resetCalibrationCenters()
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 1.5).onEnded { _ in
+                            showsCalibrationOverlay.toggle()
+                            if showsCalibrationOverlay {
+                                resetCalibrationCenters()
+                            }
                         }
-                    } label: {
-                        Image(systemName: "scope")
-                    }
-                    .buttonStyle(.bordered)
+                    )
 
                     if showsCalibrationOverlay {
                         Button("重設校正") {
@@ -624,6 +776,7 @@ struct RoundFlowView: View {
 
             HStack {
                 Button("清除重選") {
+                    playRoundClick()
                     session.clearTeamSelection()
                 }
                 .buttonStyle(.bordered)
@@ -631,6 +784,7 @@ struct RoundFlowView: View {
                 Spacer()
 
                 Button("確認送出隊伍") {
+                    playRoundClick()
                     confirmNominationIfNeeded()
                 }
                 .buttonStyle(.borderedProminent)
@@ -657,11 +811,13 @@ struct RoundFlowView: View {
 
             HStack(spacing: 12) {
                 Button("同意") {
+                    playRoundClick()
                     session.recordCurrentVote(agree: true)
                 }
                 .buttonStyle(.borderedProminent)
 
                 Button("反對") {
+                    playRoundClick()
                     session.recordCurrentVote(agree: false)
                 }
                 .buttonStyle(.bordered)
@@ -691,6 +847,7 @@ struct RoundFlowView: View {
                 .foregroundStyle(passed ? .green : .red)
 
             Button(passed ? "開始任務出牌" : "下一輪提名") {
+                playRoundClick()
                 session.finishVotingResult()
             }
             .buttonStyle(.borderedProminent)
@@ -730,11 +887,13 @@ struct RoundFlowView: View {
 
             HStack(spacing: 12) {
                 Button("成功") {
+                    playRoundClick()
                     handleMissionChoice(success: true)
                 }
                 .buttonStyle(.borderedProminent)
 
                 Button("失敗") {
+                    playRoundClick()
                     handleMissionChoice(success: false)
                 }
                 .buttonStyle(.bordered)
@@ -743,6 +902,7 @@ struct RoundFlowView: View {
             }
             .confirmationDialog("確認本次出牌？", isPresented: $showConfirmMissionChoice) {
                 Button(pendingMissionSuccess ? "確認成功" : "確認失敗") {
+                    playRoundClick()
                     session.submitMissionCard(success: pendingMissionSuccess)
                     triggerSentAnimation()
                 }
@@ -783,8 +943,9 @@ struct RoundFlowView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Button(session.goodWins >= 3 ? "進入刺殺" : "進入下一局") {
-                session.finishReveal()
+            Button(revealAdvanceButtonTitle) {
+                playRoundClick()
+                handleRevealAdvance()
             }
             .buttonStyle(.borderedProminent)
         }
@@ -811,12 +972,14 @@ struct RoundFlowView: View {
             .pickerStyle(.menu)
 
             Button("確認刺殺") {
+                playRoundClick()
                 confirmAssassinationIfNeeded()
             }
             .buttonStyle(.borderedProminent)
             .alert("確認刺殺目標？", isPresented: $showConfirmAssassination) {
                 Button("刺殺玩家 \(selectedAssassinationTarget + 1) 號") {
-                    session.assassinate(target: selectedAssassinationTarget)
+                    playRoundClick()
+                    startAssassinationCinematic()
                 }
                 Button("取消", role: .cancel) {}
             }
@@ -853,6 +1016,7 @@ struct RoundFlowView: View {
 
             HStack {
                 Button("再來一局\n（重洗身份）") {
+                    playRoundClick()
                     session.restartWithReshuffle()
                 }
                 .lineLimit(2)
@@ -862,6 +1026,7 @@ struct RoundFlowView: View {
                 .foregroundStyle(.white)
 
                 Button("回到首頁") {
+                    playRoundClick()
                     dismiss()
                 }
                 .lineLimit(2)
@@ -1166,6 +1331,327 @@ struct RoundFlowView: View {
             .joined(separator: " ")
     }
 
+    private func playRoundClick() {
+        SoundEffectPlayer.shared.play(.clickSecondary, isEnabled: appSettings.soundEnabled)
+    }
+
+    private var revealAdvanceButtonTitle: String {
+        if session.goodWins >= 3 {
+            return "進入刺殺"
+        }
+
+        if session.evilWins >= 3 || session.roundIndex + 1 >= session.missionSizes.count {
+            return "查看結果"
+        }
+
+        return "進入下一局"
+    }
+
+    private func handleRevealAdvance() {
+        if session.evilWins >= 3 {
+            startEvilVictoryCinematic()
+            return
+        }
+
+        session.finishReveal()
+    }
+
+    private func presentMissionMemeIfNeeded() {
+        guard case .reveal(let success, _) = session.phase else { return }
+        guard appSettings.soundEnabled || appSettings.effectsEnabled else { return }
+
+        let overlay = missionMemeOverlayConfig(success: success)
+        missionMemeOverlaySequence += 1
+        let currentSequence = missionMemeOverlaySequence
+
+        if appSettings.soundEnabled {
+            SoundEffectPlayer.shared.play(overlay.soundEffect, isEnabled: true)
+            if overlay.soundEffect == .missionSuccessMeme {
+                let fadeDuration = 1.2
+                let fadeStartDelay = max(SoundEffectPlayer.shared.duration(for: overlay.soundEffect) - fadeDuration, 0.2)
+                DispatchQueue.main.asyncAfter(deadline: .now() + fadeStartDelay) {
+                    if activeMissionMemeOverlay == overlay {
+                        SoundEffectPlayer.shared.fadeOut(.missionSuccessMeme, duration: fadeDuration)
+                    }
+                }
+            }
+        }
+
+        guard appSettings.effectsEnabled else { return }
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            activeMissionMemeOverlay = overlay
+        }
+
+        let overlayDuration = max(SoundEffectPlayer.shared.duration(for: overlay.soundEffect) + overlay.holdAfterSound, 0.8)
+        DispatchQueue.main.asyncAfter(deadline: .now() + overlayDuration) {
+            guard currentSequence == missionMemeOverlaySequence else { return }
+            dismissMissionMemeOverlay()
+        }
+    }
+
+    private func missionMemeOverlayConfig(success: Bool) -> MissionMemeOverlay {
+        if success {
+            if Bool.random() {
+                return MissionMemeOverlay(
+                    imageName: "nice",
+                    title: "NICE",
+                    soundEffect: .missionSuccessNice,
+                    holdAfterSound: 0.5
+                )
+            }
+
+            return MissionMemeOverlay(
+                imageName: "successkid",
+                title: "我們做到了",
+                soundEffect: .missionSuccessMeme,
+                holdAfterSound: 0
+            )
+        }
+
+        return MissionMemeOverlay(
+            imageName: "heyheyboy",
+            title: "壞人得逞",
+            soundEffect: .missionFailureMeme,
+            holdAfterSound: 0
+        )
+    }
+
+    private func dismissMissionMemeOverlay() {
+        missionMemeOverlaySequence += 1
+        if let activeMissionMemeOverlay {
+            SoundEffectPlayer.shared.stop(activeMissionMemeOverlay.soundEffect)
+        }
+
+        guard activeMissionMemeOverlay != nil else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            activeMissionMemeOverlay = nil
+        }
+    }
+
+    private func startEvilVictoryCinematic() {
+        let overlay = EvilVictoryCinematicState(
+            imageName: "章魚哥贏家",
+            title: "邪惡陣營獲勝",
+            soundEffect: .evilVictoryCarelessWhisper,
+            holdAfterSound: 0.5
+        )
+
+        evilVictoryCinematicSequence += 1
+        let currentSequence = evilVictoryCinematicSequence
+        evilVictoryRotation = -120
+        evilVictoryScale = 0.45
+
+        if appSettings.soundEnabled {
+            SoundEffectPlayer.shared.play(overlay.soundEffect, isEnabled: true)
+        }
+
+        if appSettings.effectsEnabled {
+            evilVictoryCinematic = overlay
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.72)) {
+                evilVictoryScale = 1
+            }
+            withAnimation(.easeOut(duration: 0.65)) {
+                evilVictoryRotation = 0
+            }
+        }
+
+        let totalDuration = max(SoundEffectPlayer.shared.duration(for: overlay.soundEffect) + overlay.holdAfterSound, 0.8)
+        DispatchQueue.main.asyncAfter(deadline: .now() + totalDuration) {
+            guard currentSequence == evilVictoryCinematicSequence else { return }
+            dismissEvilVictoryCinematic(commitResult: true)
+        }
+    }
+
+    private func dismissEvilVictoryCinematic(commitResult: Bool) {
+        evilVictoryCinematicSequence += 1
+        SoundEffectPlayer.shared.stop(.evilVictoryCarelessWhisper)
+        evilVictoryRotation = 0
+        evilVictoryScale = 1
+
+        let wasPresented = evilVictoryCinematic != nil
+        evilVictoryCinematic = nil
+
+        guard commitResult, wasPresented else { return }
+        session.finishReveal()
+    }
+
+    private func startAssassinationCinematic() {
+        let wasSuccessful = session.role(for: selectedAssassinationTarget) == .merlin
+        assassinationCinematicSequence += 1
+        let currentSequence = assassinationCinematicSequence
+
+        beastJumpOffset = 0
+        beastShakeOffset = 0
+
+        if appSettings.soundEnabled {
+            SoundEffectPlayer.shared.stop(.assassinationSuspense)
+            SoundEffectPlayer.shared.play(.assassinationSuspense, isEnabled: true)
+        }
+
+        if appSettings.effectsEnabled {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                assassinationCinematic = AssassinationCinematicState(
+                    targetSeat: selectedAssassinationTarget,
+                    wasSuccessful: wasSuccessful,
+                    stage: .suspense
+                )
+            }
+        }
+
+        let suspenseDuration = max(SoundEffectPlayer.shared.duration(for: .assassinationSuspense), 0.6) + 2
+        DispatchQueue.main.asyncAfter(deadline: .now() + suspenseDuration) {
+            guard currentSequence == assassinationCinematicSequence else { return }
+            transitionToAssassinationResult(wasSuccessful: wasSuccessful)
+        }
+    }
+
+    private func transitionToAssassinationResult(wasSuccessful: Bool) {
+        assassinationCinematicSequence += 1
+
+        if !appSettings.effectsEnabled {
+            commitAssassinationResult(wasSuccessful: wasSuccessful)
+            return
+        }
+
+        beastJumpOffset = 0
+        beastShakeOffset = 0
+        withAnimation(.easeInOut(duration: 0.35)) {
+            assassinationCinematic = AssassinationCinematicState(
+                targetSeat: selectedAssassinationTarget,
+                wasSuccessful: wasSuccessful,
+                stage: .result(wasSuccessful: wasSuccessful)
+            )
+        }
+
+        if !wasSuccessful {
+            if appSettings.soundEnabled {
+                SoundEffectPlayer.shared.play(.assassinationFailEpic, isEnabled: true)
+                let totalDuration = SoundEffectPlayer.shared.duration(for: .assassinationFailEpic)
+                let fadeDuration = max(totalDuration - 3, 0.5)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    if case .result(wasSuccessful: false)? = assassinationCinematic?.stage {
+                        SoundEffectPlayer.shared.fadeTo(.assassinationFailEpic, targetVolume: 0.5, duration: fadeDuration)
+                    }
+                }
+            }
+            return
+        }
+
+        if appSettings.soundEnabled {
+            SoundEffectPlayer.shared.play(.beastRoar, isEnabled: true)
+            let totalDuration = SoundEffectPlayer.shared.duration(for: .beastRoar)
+            let fadeDuration = max(totalDuration - 3, 0.5)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                if case .result(wasSuccessful: true)? = assassinationCinematic?.stage {
+                    SoundEffectPlayer.shared.fadeTo(.beastRoar, targetVolume: 0.5, duration: fadeDuration)
+                }
+            }
+        }
+
+        playBeastAnimation(sequence: assassinationCinematicSequence)
+    }
+
+    private func playBeastAnimation(sequence: Int) {
+        let jumpHeight: CGFloat = 24
+        let jumpDuration = 0.18
+        let totalJumpTime = 2.0
+        let jumpCount = Int(totalJumpTime / (jumpDuration * 2))
+
+        for jumpIndex in 0..<jumpCount {
+            let delay = Double(jumpIndex) * (jumpDuration * 2)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard sequence == assassinationCinematicSequence else { return }
+                withAnimation(.easeOut(duration: jumpDuration)) {
+                    beastJumpOffset = -jumpHeight
+                }
+            }
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay + jumpDuration) {
+                guard sequence == assassinationCinematicSequence else { return }
+                withAnimation(.easeIn(duration: jumpDuration)) {
+                    beastJumpOffset = 0
+                }
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + totalJumpTime) {
+            guard sequence == assassinationCinematicSequence else { return }
+            withAnimation(.easeOut(duration: 0.12)) {
+                beastJumpOffset = 0
+            }
+            withAnimation(.easeInOut(duration: 0.08).repeatForever(autoreverses: true)) {
+                beastShakeOffset = 22
+            }
+        }
+    }
+
+    private func handleAssassinationCinematicTap() {
+        guard let assassinationCinematic else { return }
+
+        switch assassinationCinematic.stage {
+        case .suspense:
+            transitionToAssassinationResult(wasSuccessful: assassinationCinematic.wasSuccessful)
+        case .result:
+            dismissAssassinationCinematic(commitResult: true)
+        }
+    }
+
+    private func dismissAssassinationCinematic(commitResult: Bool) {
+        assassinationCinematicSequence += 1
+        SoundEffectPlayer.shared.stop(.assassinationSuspense)
+        SoundEffectPlayer.shared.stop(.beastRoar)
+        SoundEffectPlayer.shared.stop(.assassinationFailEpic)
+        beastJumpOffset = 0
+        beastShakeOffset = 0
+
+        let pendingResult = assassinationCinematic?.wasSuccessful
+        assassinationCinematic = nil
+
+        guard commitResult, let pendingResult else { return }
+        commitAssassinationResult(wasSuccessful: pendingResult)
+    }
+
+    private func commitAssassinationResult(wasSuccessful: Bool) {
+        session.assassinate(target: selectedAssassinationTarget)
+    }
+
+    private func assassinationImage(for state: AssassinationCinematicState) -> Image {
+        switch state.stage {
+        case .suspense:
+            return Image("慌張")
+        case .result(let wasSuccessful):
+            return Image(wasSuccessful ? "野獸" : "ishowSpeed")
+        }
+    }
+
+    private func assassinationTitle(for state: AssassinationCinematicState) -> String {
+        switch state.stage {
+        case .suspense:
+            return "刺殺進行中"
+        case .result(let wasSuccessful):
+            return wasSuccessful ? "梅林死啦！！！！！！" : "梅林逃過一劫"
+        }
+    }
+
+    private func assassinationSubtitle(for state: AssassinationCinematicState) -> String {
+        switch state.stage {
+        case .suspense:
+            return "玩家 \(state.targetSeat + 1) 號即將揭曉命運"
+        case .result(let wasSuccessful):
+            return wasSuccessful ? "點一下進入真正的結果公布" : "點一下進入真正的結果公布"
+        }
+    }
+
+    private func assassinationStageID(for state: AssassinationCinematicState) -> String {
+        switch state.stage {
+        case .suspense:
+            return "suspense"
+        case .result(let wasSuccessful):
+            return "result-\(wasSuccessful)"
+        }
+    }
+
     private func identityInfoText(for seat: Int, role: Role) -> String {
         let evilSeats = session.assignments.filter { $0.value.faction == .evil }.map(\.key).sorted()
         let mordredSeats = session.assignments.filter { $0.value == .mordred }.map(\.key)
@@ -1226,7 +1712,7 @@ struct RoundFlowView: View {
 
     private func confirmAssassinationIfNeeded() {
         if session.isDebugFastMode {
-            session.assassinate(target: selectedAssassinationTarget)
+            startAssassinationCinematic()
             return
         }
         showConfirmAssassination = true
@@ -1482,7 +1968,9 @@ private struct SentOverlay: View {
 private extension View {
     func panelStyle() -> some View {
         self
-            .padding(14)
+            .padding(.top, 24)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 14)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
             .shadow(radius: 4)
     }

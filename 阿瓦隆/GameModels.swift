@@ -97,8 +97,8 @@ struct GameSetup: Codable, Sendable {
     var includeGenericMinions = true
 
     // 規則開關
-    var requireTwoFailsOnFourthAtSevenPlus = true // 7+ 人第 4 局需 2 張失敗
-    var fiveRejectsEvilWins = true               // 5 次否決壞人勝利
+    var requireTwoFailsOnFourthAtSevenPlus = false // 7+ 人第 4 局需 2 張失敗
+    var fiveRejectsEvilWins = false               // 5 次否決壞人勝利
     var clockwiseLeaderRotation = true           // 隊長輪替方向 true=順時針
 
     // 投票顯示策略

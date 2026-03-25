@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct IdentityRevealView: View {
+    @Environment(AppSettings.self) private var appSettings
     @ObservedObject var session: GameSession
     var onFinished: (() -> Void)?
 
@@ -19,6 +20,7 @@ struct IdentityRevealView: View {
                 Text("請把手機交給：玩家 \(index + 1) 號")
                     .font(.title2.bold())
                 Button("我準備好了") {
+                    SoundEffectPlayer.shared.play(.clickPrimary, isEnabled: appSettings.soundEnabled)
                     hasViewedCurrentCard = false
                     stage = .card
                 }
@@ -37,6 +39,7 @@ struct IdentityRevealView: View {
 
                 if hasViewedCurrentCard {
                     Button("我看完了") {
+                        SoundEffectPlayer.shared.play(.clickPrimary, isEnabled: appSettings.soundEnabled)
                         advanceToNextPlayerOrFinish()
                     }
                     .buttonStyle(.borderedProminent)
@@ -49,6 +52,19 @@ struct IdentityRevealView: View {
         }
         .padding()
         .presentationBackground(.thinMaterial)
+        .onAppear {
+            SoundEffectPlayer.shared.playLoopingIfNeeded(.setupOpen, isEnabled: appSettings.soundEnabled, volume: 0.16)
+        }
+        .onDisappear {
+            SoundEffectPlayer.shared.fadeOutLooping(.setupOpen, duration: 0.6)
+        }
+        .onChange(of: appSettings.soundEnabled) { _, newValue in
+            if newValue {
+                SoundEffectPlayer.shared.playLoopingIfNeeded(.setupOpen, isEnabled: true, volume: 0.16)
+            } else {
+                SoundEffectPlayer.shared.stopAll()
+            }
+        }
         .alert("尚未查看身份", isPresented: $showNeedViewAlert) {
             Button("知道了", role: .cancel) {}
         } message: {

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SetupView: View {
+    @Environment(AppSettings.self) private var appSettings
     @State private var setup = GameSetup()
     @State private var players: [Player] = (1...5).map { Player(name: "玩家\($0)") }
     @State private var showWarnings = false
@@ -31,12 +32,27 @@ struct SetupView: View {
             .background(Color(.systemGroupedBackground))
             .onChange(of: setup.playerCount) { _, newValue in
                 adjustPlayersCount(to: newValue)
+                syncRuleDefaults(for: newValue)
             }
             .onChange(of: setup.evilCount) { _, _ in
                 enforceCaps()
             }
             .onChange(of: setup.goodCount) { _, _ in
                 enforceCaps()
+            }
+            .onAppear {
+                syncRuleDefaults(for: setup.playerCount)
+                SoundEffectPlayer.shared.playLoopingIfNeeded(.setupOpen, isEnabled: appSettings.soundEnabled, volume: 0.18)
+            }
+            .onDisappear {
+                SoundEffectPlayer.shared.fadeOutLooping(.setupOpen, duration: 0.6)
+            }
+            .onChange(of: appSettings.soundEnabled) { _, newValue in
+                if newValue {
+                    SoundEffectPlayer.shared.playLoopingIfNeeded(.setupOpen, isEnabled: true, volume: 0.18)
+                } else {
+                    SoundEffectPlayer.shared.stopAll()
+                }
             }
             .fullScreenCover(item: $revealSession, onDismiss: {
                 if let session = pendingRoundFlowSession {
@@ -54,53 +70,96 @@ struct SetupView: View {
             }
 #if DEBUG
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu("快速測試") {
-                        Button("快速發身份（沿用目前設定）") {
-                            let session = GameSession(setup: setup, playerCount: players.count)
-                            session?.enableDebugFastMode()
-                            revealSession = session
-                        }
-                        Button("直接進入回合（沿用目前設定）") {
-                            let session = GameSession(setup: setup, playerCount: players.count)
-                            session?.enableDebugFastMode()
-                            roundFlowSession = session
-                        }
-                        Button("直接進投票（沿用目前設定）") {
-                            let session = GameSession(setup: setup, playerCount: players.count)
-                            session?.startDebugVotingPhase()
-                            roundFlowSession = session
-                        }
-                        Divider()
-                        Button("快速發身份（5 人預設）") {
-                            applyDefaultFivePlayerPreset()
-                            let session = GameSession(setup: setup, playerCount: players.count)
-                            session?.enableDebugFastMode()
-                            revealSession = session
-                        }
-                        Button("直接進入回合（5 人預設）") {
-                            applyDefaultFivePlayerPreset()
-                            let session = GameSession(setup: setup, playerCount: players.count)
-                            session?.enableDebugFastMode()
-                            roundFlowSession = session
-                        }
-                        Button("直接進投票（5 人預設）") {
-                            applyDefaultFivePlayerPreset()
-                            let session = GameSession(setup: setup, playerCount: players.count)
-                            session?.startDebugVotingPhase()
-                            roundFlowSession = session
-                        }
-                        Button("圖示排版預覽（5 人 2勝2敗/4否決）") {
-                            applyDefaultFivePlayerPreset()
-                            let session = GameSession(setup: setup, playerCount: players.count)
-                            session?.loadDebugBoardPreview()
-                            roundFlowSession = session
-                        }
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
+                    settingsMenu
+                }
+            }
+#else
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    settingsMenu
                 }
             }
 #endif
         }
+    }
+
+    private var settingsMenu: some View {
+        Menu {
+            Toggle(isOn: soundBinding) {
+                Label("開啟音效", systemImage: appSettings.soundEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+            }
+
+            Toggle(isOn: effectsBinding) {
+                Label("開啟特效", systemImage: appSettings.effectsEnabled ? "sparkles" : "sparkles.slash")
+            }
+#if DEBUG
+            Divider()
+            Menu("DEBUG模式") {
+                Button("快速發身份（沿用目前設定）") {
+                    let session = GameSession(setup: setup, playerCount: players.count)
+                    session?.enableDebugFastMode()
+                    revealSession = session
+                }
+                Button("直接進入回合（沿用目前設定）") {
+                    let session = GameSession(setup: setup, playerCount: players.count)
+                    session?.enableDebugFastMode()
+                    roundFlowSession = session
+                }
+                Button("直接進投票（沿用目前設定）") {
+                    let session = GameSession(setup: setup, playerCount: players.count)
+                    session?.startDebugVotingPhase()
+                    roundFlowSession = session
+                }
+                Divider()
+                Button("快速發身份（5 人預設）") {
+                    applyDefaultFivePlayerPreset()
+                    let session = GameSession(setup: setup, playerCount: players.count)
+                    session?.enableDebugFastMode()
+                    revealSession = session
+                }
+                Button("直接進入回合（5 人預設）") {
+                    applyDefaultFivePlayerPreset()
+                    let session = GameSession(setup: setup, playerCount: players.count)
+                    session?.enableDebugFastMode()
+                    roundFlowSession = session
+                }
+                Button("直接進投票（5 人預設）") {
+                    applyDefaultFivePlayerPreset()
+                    let session = GameSession(setup: setup, playerCount: players.count)
+                    session?.startDebugVotingPhase()
+                    roundFlowSession = session
+                }
+                Button("圖示排版預覽（5 人 2勝2敗/4否決）") {
+                    applyDefaultFivePlayerPreset()
+                    let session = GameSession(setup: setup, playerCount: players.count)
+                    session?.loadDebugBoardPreview()
+                    roundFlowSession = session
+                }
+            }
+#endif
+        } label: {
+            Image(systemName: "gearshape.fill")
+        }
+    }
+
+    private var soundBinding: Binding<Bool> {
+        Binding(
+            get: { appSettings.soundEnabled },
+            set: { newValue in
+                appSettings.soundEnabled = newValue
+                if newValue {
+                    SoundEffectPlayer.shared.play(.clickPrimary, isEnabled: true)
+                }
+            }
+        )
+    }
+
+    private var effectsBinding: Binding<Bool> {
+        Binding(
+            get: { appSettings.effectsEnabled },
+            set: { appSettings.effectsEnabled = $0 }
+        )
     }
 
     private func startIdentityRevealFlow() {
@@ -117,12 +176,16 @@ struct SetupView: View {
         setup.includeMordred = false
         setup.includeOberon = false
         setup.includeGenericMinions = true
-        setup.requireTwoFailsOnFourthAtSevenPlus = true
-        setup.fiveRejectsEvilWins = true
+        setup.requireTwoFailsOnFourthAtSevenPlus = false
+        setup.fiveRejectsEvilWins = false
         setup.clockwiseLeaderRotation = true
         setup.voteReveal = .showNow
         adjustPlayersCount(to: 5)
         enforceCaps()
+    }
+
+    private func syncRuleDefaults(for playerCount: Int) {
+        setup.requireTwoFailsOnFourthAtSevenPlus = playerCount >= 7
     }
 
     private func adjustPlayersCount(to newValue: Int) {
@@ -459,6 +522,7 @@ private struct WarningsSection: View {
 }
 
 private struct ActionButtons: View {
+    @Environment(AppSettings.self) private var appSettings
     @Binding var showWarnings: Bool
     @Binding var players: [Player]
     let setup: GameSetup
@@ -479,6 +543,11 @@ private struct ActionButtons: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity)
             }
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    SoundEffectPlayer.shared.play(.clickPrimary, isEnabled: appSettings.soundEnabled)
+                }
+            )
             .buttonStyle(.borderedProminent)
             .disabled(players.count != setup.playerCount)
         }
